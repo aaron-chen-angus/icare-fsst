@@ -682,10 +682,10 @@
             ${metric('Peak trunk dev', fmt(s.peak_trunk_angle_deg, 1, '°'))}
             ${metric('Trunk ang vel', fmt(s.mean_trunk_angular_velocity_deg_s, 1, '°/s'))}
             ${metric('Near-fall*', s.near_fall_event ? 'YES' : 'no')}
-            ${metric('Agility', '–')}
-            ${metric('Stability', '–')}
-            ${metric('Instability', '–')}
-          </div><p class="hint">* experimental, unvalidated. Agility / stability / instability scores are reserved (no published definition).</p></div>`;
+            ${metric('Agility', '<small>reserved</small>')}
+            ${metric('Stability', '<small>reserved</small>')}
+            ${metric('Instability', '<small>reserved</small>')}
+          </div><p class="hint">* experimental, unvalidated. <b>Agility / stability / instability are intentionally reserved</b> — the original IntelliCARE backend that produced them was never available and there is no published formula, so the app does not invent values. They stay empty until validated formulas are supplied.</p></div>`;
     }
 
     function stagesTable(r) {

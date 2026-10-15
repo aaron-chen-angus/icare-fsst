@@ -238,37 +238,43 @@
         // NOT stall progress or block the time. A stage completes when BOTH feet have reached the
         // expected square; if the participant skips the trail-foot touch we still move on once the
         // next expected square is reached. The goal: always capture the time when they return to 1.
-        let k = 1, stageFoot = { L: null, R: null }, extra = 0, errors = 0;
-        const stageRecs = [];
         const postStart = episodes.filter(e => e.tOn >= startTon - 1e-6);
+        // LEAD-FOOT stage reconstruction (robust on a frontal 2D camera). A stage is reached as soon
+        // as the FIRST foot lands in the next expected square; the trailing foot's touch in the same
+        // square is captured if present but is NOT required to advance (people step one foot at a
+        // time, and the far foot is often occluded). Contacts in a wrong square are counted as
+        // sequence errors for reporting but never stall the sequence.
+        let k = 1, extra = 0, errors = 0;
+        const stageRecs = [];
+        let openStage = null;   // { stage, target, first, second }
         for (const e of postStart) {
             if (k > 8) { e.stage = 8; e.isExtra = true; e.isError = false; continue; }
             const target = SEQ[k - 1], prev = (k === 1) ? 1 : SEQ[k - 2];
             if (G.matchesSquare(e.u, e.v, target, cfg)) {
                 e.stage = k; e.isError = false;
-                if (!stageFoot[e.foot]) { stageFoot[e.foot] = e; e.isExtra = false; }
-                else { extra++; e.isExtra = true; }
-                if (stageFoot.L && stageFoot.R) {
-                    const first = stageFoot.L.tOn <= stageFoot.R.tOn ? stageFoot.L : stageFoot.R;
-                    const second = first === stageFoot.L ? stageFoot.R : stageFoot.L;
-                    stageRecs.push({ stage: k, target, lead: first.foot, first, second });
-                    k++; stageFoot = { L: null, R: null };
+                if (!openStage) {
+                    // first foot into the target square => the stage is reached NOW
+                    openStage = { stage: k, target, lead: e.foot, first: e, second: null };
+                    e.isExtra = false;
+                } else if (e.foot !== openStage.lead && !openStage.second) {
+                    openStage.second = e; e.isExtra = false;   // trailing foot joined
+                } else {
+                    extra++; e.isExtra = true;                 // another touch in the same square
                 }
+                // advance as soon as the lead foot is placed (do not wait for the trail foot)
+                stageRecs.push({ stage: openStage.stage, target: openStage.target, lead: openStage.lead, first: openStage.first, second: openStage.second || openStage.first });
+                k++; openStage = null;
             } else if (G.matchesSquare(e.u, e.v, prev, cfg)) {
+                // trailing foot catching up into the previous square, or small repositioning
                 e.stage = k - 1;
-                if (!stageFoot[e.foot]) { extra++; e.isExtra = true; e.isError = false; }
-                else { extra++; e.isExtra = true; e.isError = false; }   // repositioning, not an error
+                const last = stageRecs[stageRecs.length - 1];
+                if (last && last.second === last.first && e.foot !== last.lead) { last.second = e; e.isExtra = false; }
+                else { extra++; e.isExtra = true; }
+                e.isError = false;
             } else {
                 // wrong square: record the violation but keep going (do NOT stall the sequence).
                 errors++; e.stage = k; e.isExtra = false; e.isError = true;
             }
-        }
-        // Lenient completion of the final return: if we reached stage 8's target region but only one
-        // foot was detected there, still close the stage using the single foot so t_stop is captured.
-        if (k === 8 && (stageFoot.L || stageFoot.R)) {
-            const only = stageFoot.L || stageFoot.R;
-            stageRecs.push({ stage: 8, target: SEQ[7], lead: only.foot, first: only, second: only });
-            k = 9;
         }
         const stagesCompleted = Math.min(8, stageRecs.length);
 
@@ -282,10 +288,11 @@
             const firstSq2 = postStart.filter(e => e.square === 2).sort((a, b) => a.tOn - b.tOn)[0];
             if (firstSq2) tStartTime = firstSq2.tOn;
         }
-        // t_stop: last-foot return to square 1 after the lap. Prefer the formal stage 8; else the
-        // last contact in square 1 that occurs after the participant has left square 1 (the return).
-        let tStopTime = stage8 ? stage8.second.tOn : null;
-        if (tStopTime == null && tStartTime != null) {
+        // t_stop: the moment BOTH feet are back in square 1 at the end of the lap. We detect this
+        // from the actual path (robust to imperfect stage bookkeeping) rather than relying on the
+        // stage-8 record, which under lead-foot advancing may hold only the first foot.
+        let tStopTime = null;
+        if (tStartTime != null) {
             // Stage-independent FINAL-return detection (robust to wrong steps). Build the ordered list
             // of in-square contacts after t_start, find the LAST contiguous run of square-1 contacts
             // (the final return), and require that the participant genuinely went AWAY first (visited
@@ -323,14 +330,42 @@
             if (s < 8 && stageFirst[s + 1] != null) D.push(stageFirst[s + 1] - stageFirst[s]);
             else if (s === 8 && tStopTime != null) D.push(tStopTime - stageFirst[8]);
         }
-        const avgStep = D.length ? mean(D) : NaN;
+        // Robust fallback: if the stage machine captured too few durations (frontal-camera noise),
+        // derive step intervals directly from the ordered lead-contact times between t_start and
+        // t_stop so the Stepping panel is never blank when a time exists.
+        if (D.length < 2 && tStartTime != null && tStopTime != null) {
+            const leadTimes = [];
+            // one representative contact time per distinct in-sequence square touch
+            let lastSq = null;
+            for (const e of postStart) {
+                if (e.tOn < tStartTime - 1e-6 || e.tOn > tStopTime + 1e-6) continue;
+                if (e.square >= 1 && e.square <= 4 && e.square !== lastSq) { leadTimes.push(e.tOn); lastSq = e.square; }
+            }
+            D.length = 0;
+            for (let i = 1; i < leadTimes.length; i++) D.push(leadTimes[i] - leadTimes[i - 1]);
+            // final: last step to the stop
+            if (leadTimes.length && tStopTime > leadTimes[leadTimes.length - 1]) D.push(tStopTime - leadTimes[leadTimes.length - 1]);
+        }
+        const avgStep = D.length ? mean(D) : (timeToCompleteSafe(tStartTime, tStopTime) != null ? timeToCompleteSafe(tStartTime, tStopTime) / 8 : NaN);
         const sdStep = D.length > 1 ? sd(D) : NaN;
         const cvStep = (Number.isFinite(sdStep) && avgStep) ? 100 * sdStep / avgStep : NaN;
+        function timeToCompleteSafe(a, b) { return (a != null && b != null && b > a) ? b - a : null; }
 
-        const cwTime = (stage4 && tStartTime != null) ? stage4.second.tOn - tStartTime : NaN;
-        const acwTime = (stage4 && tStopTime != null) ? tStopTime - stage4.second.tOn : NaN;
+        // Directional timing: split the lap at the MID-LAP return to square 1 (after squares 2,3,4).
+        // Prefer stage 4's contact; else the first square-1 contact after the participant reached
+        // the far side (square 4) following t_start; else the midpoint of the trial.
+        let splitTime = (stageFirst[4] != null) ? stageFirst[4] : (stageFirst[5] != null ? stageFirst[5] : null);
+        if (splitTime == null && tStartTime != null && tStopTime != null) {
+            const reach4 = postStart.find(e => e.square === 4 && e.tOn > tStartTime);
+            if (reach4) {
+                const back1 = postStart.find(e => e.square === 1 && e.tOn > reach4.tOn);
+                splitTime = back1 ? back1.tOn : (tStartTime + tStopTime) / 2;
+            } else splitTime = (tStartTime + tStopTime) / 2;
+        }
+        const cwTime = (tStartTime != null && splitTime != null) ? splitTime - tStartTime : NaN;
+        const acwTime = (tStopTime != null && splitTime != null) ? tStopTime - splitTime : NaN;
         const phaseRatio = (Number.isFinite(cwTime) && cwTime > 0 && Number.isFinite(acwTime)) ? acwTime / cwTime : NaN;
-        const interlimb = stageRecs.length ? mean(stageRecs.map(s => s.second.tOn - s.first.tOn)) : NaN;
+        const interlimb = stageRecs.length ? mean(stageRecs.map(s => s.second.tOn - s.first.tOn).filter(Number.isFinite)) : NaN;
 
         // double support ratio + hesitation within [tStart,tStop]
         let dsRatio = NaN, hesitationCount = 0;
