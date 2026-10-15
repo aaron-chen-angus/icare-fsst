@@ -16,10 +16,10 @@ const CONFIG = {
         schemaVersion: '1.0'
     },
 
-    // Google Sheets (Apps Script web app). MUST be left empty until the operator deploys a NEW
-    // FSST sheet and pastes its /exec URL here. Never reuse the STS webhook (brief 10.3).
+    // Google Sheets (Apps Script web app). The /exec URL of the FSST-LAB deployment.
+    // Sheet: https://docs.google.com/spreadsheets/d/1J82ZEGGSQVQdTEJL_uldu6few7CDFZLvov8DNwEZ7z4/
     sheets: {
-        webhookUrl: '',
+        webhookUrl: 'https://script.google.com/macros/s/AKfycbwTcWdpPD1oywKDS7nnBFBhmXePFxm7RMK89KhVLjikDQhj4VOfivRlDv3lxVaD1vRS3g/exec',
         uploadFrames: false   // true = also upload the analysed 30 Hz series to a "Frames" sheet
     },
 
