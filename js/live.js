@@ -67,22 +67,40 @@
         _onContact(side, fl, tS) {
             const cfg = this.cfg, sq = G.squareOf(fl.u, fl.v, cfg);
             this.lastPos[side] = fl;
+            this.lastSquare = this.lastSquare || { L: null, R: null };
+            this.lastSquare[side] = sq;
             if (this.done) return;
+
+            // Lenient start: the timer starts the moment the FIRST foot lands in square 2,
+            // regardless of exact stage bookkeeping.
+            if (!this.started && sq === 2) { this.started = true; this.tStart = tS; }
+            if (this.started && sq !== 1) this.leftStartSquare = true;   // they have left square 1
+
             const target = this.seq[this.stage - 1];
             const prev = this.stage === 1 ? 1 : this.seq[this.stage - 2];
             if (G.matchesSquare(fl.u, fl.v, target, cfg)) {
                 if (!this.stageFoot[side]) this.stageFoot[side] = tS;
-                // timer starts on first contact in square 2 (stage 1 target)
-                if (this.stage === 1 && !this.started) { this.started = true; this.tStart = tS; }
                 if (this.stageFoot.L != null && this.stageFoot.R != null) {
-                    if (this.stage === 8) { this.tStop = Math.max(this.stageFoot.L, this.stageFoot.R); this.done = true; }
                     this.stage = Math.min(9, this.stage + 1);
                     this.stageFoot = { L: null, R: null };
                 }
             } else if (G.matchesSquare(fl.u, fl.v, prev, cfg)) {
-                // repositioning in previous square — not an error unless already placed
+                // repositioning in the previous square — allowed, not an error
             } else if (sq !== 0) {
+                // wrong square: flag it visually but keep going (never stall)
                 this.errors++; this.wrongFlash = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + 500;
+            }
+
+            // Lenient AUTO-STOP: once the participant has left square 1 and both feet are detected
+            // back in square 1 near the end of the lap, stop and record — even if some middle stages
+            // were imperfect. "Near the end" = we are at/after the final return stage (stage >= 7)
+            // OR a reasonable number of contacts have occurred.
+            if (this.started && this.leftStartSquare && !this.done) {
+                const bothHome = this.lastSquare.L === 1 && this.lastSquare.R === 1;
+                // Only treat a return to square 1 as the END once the participant is on the final
+                // return leg (stage >= 7). This avoids a false stop early in the lap while still
+                // tolerating imperfect intermediate steps.
+                if (bothHome && this.stage >= 7) { this.tStop = tS; this.done = true; }
             }
         }
 

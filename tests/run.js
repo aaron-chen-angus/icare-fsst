@@ -61,16 +61,20 @@
             const st = SEQ.map(sq => ({ square: sq, swingS: 0.3 }));
             st[2] = { square: SEQ[2], wrongSquare: 2, swingS: 0.3 };   // stage 3 lands in square 2
             const r = run(baseScript({ stages: st }));
+            // LENIENT: a wrong-square step is recorded as a metric but does NOT block the time.
             assert('B wrong square: sequence error > 0', r.summary.sequence_error_count > 0, r.summary.sequence_error_count);
             assert('B wrong square: SEQUENCE_ERROR flag', flagsOf(r).includes('SEQUENCE_ERROR'), r.summary.qc_flags);
-            assert('B wrong square: status INVALID_SEQUENCE', r.summary.test_status === 'INVALID_SEQUENCE', r.summary.test_status);
+            assert('B wrong square: still COMPLETED (time captured)', r.summary.test_status === 'COMPLETED', r.summary.test_status);
+            assert('B wrong square: time recorded', Number.isFinite(r.summary.time_to_complete_s), r.summary.time_to_complete_s);
+            assert('B wrong square: SEQUENCE_ERROR not blocking', r.summary.qc_pass === true, r.summary.qc_flags);
         }
         // C — incomplete (stops after stage 5)
         {
+            // Stops after stage 5 and never returns to square 1 for the final time => no stop time.
             const r = run(baseScript({ stopAfterStage: 5 }));
             assert('C incomplete: status INCOMPLETE', r.summary.test_status === 'INCOMPLETE', r.summary.test_status);
-            assert('C incomplete: 5/8', r.summary.stage_progress === '5/8', r.summary.stage_progress);
-            assert('C incomplete: INCOMPLETE_SEQUENCE flag', flagsOf(r).includes('INCOMPLETE_SEQUENCE'), r.summary.qc_flags);
+            assert('C incomplete: no time captured', r.summary.time_to_complete_s === null, r.summary.time_to_complete_s);
+            assert('C incomplete: NO_TIME_CAPTURED flag', flagsOf(r).includes('NO_TIME_CAPTURED'), r.summary.qc_flags);
         }
         // D — hesitation at stage 4
         {
@@ -182,6 +186,22 @@
             if (r.contacts[0]) check(r.contacts[0], SCHEMA.contacts, 'Contacts');
             if (r.frames[0]) check(r.frames[0], SCHEMA.frames, 'Frames');
         }
+        // T — lenient completion: a wrong step mid-lap but a clean return to square 1 => time recorded
+        {
+            const st = SEQ.map(sq => ({ square: sq, swingS: 0.3 }));
+            st[4] = { square: SEQ[4], wrongSquare: 3, swingS: 0.3 };   // stage 5 lands in a wrong square
+            const r = run(baseScript({ stages: st }));
+            assert('T lenient: COMPLETED despite wrong step', r.summary.test_status === 'COMPLETED', r.summary.test_status);
+            assert('T lenient: time recorded', Number.isFinite(r.summary.time_to_complete_s), r.summary.time_to_complete_s);
+            assert('T lenient: error recorded as metric', r.summary.sequence_error_count >= 1, r.summary.sequence_error_count);
+        }
+        // U — manual stop: operator stops mid-trial; a time (up to the stop) is still recorded
+        {
+            const r = run(baseScript({ stopAfterStage: 4 }), null, { manualStop: true });
+            assert('U manual stop: time recorded', Number.isFinite(r.summary.time_to_complete_s), r.summary.time_to_complete_s);
+            assert('U manual stop: MANUAL_STOP flag', flagsOf(r).includes('MANUAL_STOP'), r.summary.qc_flags);
+        }
+
         // S — dictionary mentions every schema key (checked by build-dictionary; here assert generator presence)
         {
             let ok = true, detail = '';

@@ -233,10 +233,15 @@
 
         // --- 8-stage state machine (brief 9.4)
         const startTon = Math.max(startEps.L ? startEps.L.tOn : 0, startEps.R ? startEps.R.tOn : 0, 0);
+        // LENIENT stage machine (see config.qc.blocking comment). We advance greedily toward the
+        // expected square; a contact in the wrong square is RECORDED as a sequence error but does
+        // NOT stall progress or block the time. A stage completes when BOTH feet have reached the
+        // expected square; if the participant skips the trail-foot touch we still move on once the
+        // next expected square is reached. The goal: always capture the time when they return to 1.
         let k = 1, stageFoot = { L: null, R: null }, extra = 0, errors = 0;
         const stageRecs = [];
-        for (const e of episodes) {
-            if (e.tOn < startTon - 1e-6) { e.stage = 0; e.isExtra = false; e.isError = false; continue; }
+        const postStart = episodes.filter(e => e.tOn >= startTon - 1e-6);
+        for (const e of postStart) {
             if (k > 8) { e.stage = 8; e.isExtra = true; e.isError = false; continue; }
             const target = SEQ[k - 1], prev = (k === 1) ? 1 : SEQ[k - 2];
             if (G.matchesSquare(e.u, e.v, target, cfg)) {
@@ -252,20 +257,63 @@
             } else if (G.matchesSquare(e.u, e.v, prev, cfg)) {
                 e.stage = k - 1;
                 if (!stageFoot[e.foot]) { extra++; e.isExtra = true; e.isError = false; }
-                else { errors++; e.isExtra = false; e.isError = true; }
+                else { extra++; e.isExtra = true; e.isError = false; }   // repositioning, not an error
             } else {
+                // wrong square: record the violation but keep going (do NOT stall the sequence).
                 errors++; e.stage = k; e.isExtra = false; e.isError = true;
             }
         }
-        const stagesCompleted = stageRecs.length;
+        // Lenient completion of the final return: if we reached stage 8's target region but only one
+        // foot was detected there, still close the stage using the single foot so t_stop is captured.
+        if (k === 8 && (stageFoot.L || stageFoot.R)) {
+            const only = stageFoot.L || stageFoot.R;
+            stageRecs.push({ stage: 8, target: SEQ[7], lead: only.foot, first: only, second: only });
+            k = 9;
+        }
+        const stagesCompleted = Math.min(8, stageRecs.length);
 
-        // --- timing (brief 9.5)
+        // --- timing (brief 9.5), with robust lenient fallbacks
         const stage1 = stageRecs.find(s => s.stage === 1);
         const stage4 = stageRecs.find(s => s.stage === 4);
         const stage8 = stageRecs.find(s => s.stage === 8);
-        const tStartTime = stage1 ? stage1.first.tOn : null;   // first contact in square 2
-        const tStopTime = stage8 ? stage8.second.tOn : null;    // last contact in square 1
-        const timeToComplete = (tStartTime != null && tStopTime != null) ? tStopTime - tStartTime : null;
+        // t_start: first contact in square 2 after GO (even if ordering was imperfect).
+        let tStartTime = stage1 ? stage1.first.tOn : null;
+        if (tStartTime == null) {
+            const firstSq2 = postStart.filter(e => e.square === 2).sort((a, b) => a.tOn - b.tOn)[0];
+            if (firstSq2) tStartTime = firstSq2.tOn;
+        }
+        // t_stop: last-foot return to square 1 after the lap. Prefer the formal stage 8; else the
+        // last contact in square 1 that occurs after the participant has left square 1 (the return).
+        let tStopTime = stage8 ? stage8.second.tOn : null;
+        if (tStopTime == null && tStartTime != null) {
+            // Stage-independent FINAL-return detection (robust to wrong steps). Build the ordered list
+            // of in-square contacts after t_start, find the LAST contiguous run of square-1 contacts
+            // (the final return), and require that the participant genuinely went AWAY first (visited
+            // squares 3 and/or 4 — the far side of the cross — between t_start and that return).
+            const seqC = postStart.filter(e => e.square >= 1 && e.square <= 4 && e.tOn >= tStartTime).sort((a, b) => a.tOn - b.tOn);
+            // index where the final square-1 run begins
+            let i = seqC.length - 1;
+            while (i >= 0 && seqC[i].square === 1) i--;
+            const finalRunStart = i + 1;   // seqC[finalRunStart..] are all square 1
+            if (finalRunStart < seqC.length) {
+                const wentAway = seqC.slice(0, finalRunStart).some(e => e.square === 3 || e.square === 4);
+                if (wentAway) {
+                    // both feet back in square 1: take the later of the two feet's first contact in the run
+                    const run = seqC.slice(finalRunStart);
+                    const byFoot = { L: null, R: null };
+                    for (const e of run) { if (byFoot[e.foot] == null) byFoot[e.foot] = e.tOn; }
+                    if (byFoot.L != null && byFoot.R != null) tStopTime = Math.max(byFoot.L, byFoot.R);
+                    else tStopTime = run[0].tOn;   // single foot fallback
+                }
+            }
+        }
+        // Manual stop / timeout: the operator always gets a time. Prefer a square-1 return; else use
+        // the moment the operator stopped (last frame), so the elapsed time is always recorded.
+        if (tStopTime == null && (meta.manualStop || meta.timeout) && tStartTime != null) {
+            const lastSq1 = postStart.filter(e => e.square === 1 && e.tOn > tStartTime).sort((a, b) => a.tOn - b.tOn).pop();
+            tStopTime = lastSq1 ? lastSq1.tOn : (tEnd > tStartTime ? tEnd : null);
+        }
+        const timeToComplete = (tStartTime != null && tStopTime != null && tStopTime > tStartTime) ? tStopTime - tStartTime : null;
 
         // stage durations D_k: first[k+1]-first[k]; D_8 = tStop - first[8]
         const stageFirst = {}; for (const s of stageRecs) stageFirst[s.stage] = s.first.tOn;
@@ -373,21 +421,25 @@
             if (partial) flags.push('PARTIAL_BODY_IN_FRAME');
         }
 
+        // NO_TIME_CAPTURED is the only sequence-related blocking flag: it fires only when we could
+        // not derive a start+stop time at all (so there is genuinely nothing to report).
+        const haveTime = Number.isFinite(timeToComplete);
+        if (!haveTime && !meta.cannotDo && !meta.aborted) flags.push('NO_TIME_CAPTURED');
+
         const qcPass = !flags.some(f => cfg.qc.blocking.includes(f));
 
-        // --- status
+        // --- status (lenient): a captured time + return to square 1 => COMPLETED, even with errors.
         let status;
         if (meta.cannotDo) status = 'CANNOT_DO';
         else if (meta.aborted) status = 'ABORTED';
-        else if (errors > 0 && stagesCompleted < 8) status = 'INVALID_SEQUENCE';
-        else if (errors > 0) status = 'INVALID_SEQUENCE';
-        else if (stagesCompleted < 8) status = (meta.manualStop || meta.timeout) ? 'INCOMPLETE' : 'INCOMPLETE';
-        else status = 'COMPLETED';
-        if (validPct < 50 || !hom.ok) status = 'TRACKING_FAILED';
+        else if (validPct < 50 || !hom.ok) status = 'TRACKING_FAILED';
+        else if (haveTime) status = 'COMPLETED';          // time recorded; violations are metrics, not blockers
+        else status = 'INCOMPLETE';                        // never reached square 1 / no usable time
 
         const risk = classify(timeToComplete, status, pt, cfg);
 
-        // operator validity
+        // operator validity. A trial COUNTS toward BEST when a time was captured, QC passed, and the
+        // operator did not mark it invalid. Sequence errors / line touches alone do NOT invalidate.
         const opInvalid = operator.balanceLost || operator.supportUsed || operator.notFacingForward || (operator.valid === false);
         const validTrial = status === 'COMPLETED' && qcPass && !opInvalid;
 
@@ -454,7 +506,7 @@
         put('grid_b_x', rnd(grid.handles.B.x, 4)); put('grid_b_y', rnd(grid.handles.B.y, 4));
         put('grid_l_x', rnd(grid.handles.L.x, 4)); put('grid_l_y', rnd(grid.handles.L.y, 4));
         put('test_status', status); put('failure_reason', meta.failureReason || (status === 'COMPLETED' ? '' : status));
-        put('current_stage', k > 8 ? 8 : k - (stageFoot.L || stageFoot.R ? 0 : 0)); put('stage_progress', stagesCompleted + '/8'); put('stages_completed', stagesCompleted);
+        put('current_stage', Math.min(8, k)); put('stage_progress', stagesCompleted + '/8'); put('stages_completed', stagesCompleted);
         put('time_to_complete_s', rnd(timeToComplete, 3));
         put('live_time_s', Number.isFinite(meta.liveTime) ? rnd(meta.liveTime, 3) : null);
         put('time_difference_s', (Number.isFinite(timeToComplete) && Number.isFinite(meta.liveTime)) ? rnd(timeToComplete - meta.liveTime, 3) : null);

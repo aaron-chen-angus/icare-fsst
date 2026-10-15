@@ -120,8 +120,12 @@ const CONFIG = {
         maxImputedPct: 10,
         maxLongestGapS: 0.5,
         maxFootOcclusionPct: 20,    // [TUNE] either foot visibility < 0.5 for more than this % of the trial
-        blocking: ['LOW_FPS', 'LOW_VALID_FRAMES', 'TRACKING_GAPS', 'FOOT_OCCLUSION', 'NOT_IN_START_SQUARE',
-                   'MOVED_BEFORE_GO', 'SEQUENCE_ERROR', 'INCOMPLETE_SEQUENCE', 'MANUAL_STOP', 'TIMEOUT', 'GRID_NOT_CONFIRMED']
+        // Blocking flags prevent qc_pass / valid_trial. These are kept to genuine measurement
+        // failures only — protocol violations (wrong square, line touch, not facing forward) are
+        // RECORDED as metrics/flags but never block a time (operator decides validity). This keeps
+        // the test completable: we capture the time and metrics whenever the person returns to
+        // square 1, even if they stepped imperfectly.
+        blocking: ['LOW_FPS', 'LOW_VALID_FRAMES', 'TRACKING_GAPS', 'FOOT_OCCLUSION', 'NO_TIME_CAPTURED']
     },
 
     // Live (causal) feedback thresholds; the offline analysis is authoritative.

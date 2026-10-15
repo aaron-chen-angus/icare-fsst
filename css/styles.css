@@ -230,7 +230,9 @@ body.live .tron-bg { display: none; }
 
 /* ----------------------------------------------------------------- live session */
 .live-session { display: flex; flex-direction: column; height: 100dvh; background: #000; }
-.live-video-wrap { position: relative; flex: 1; overflow: hidden; background: #000; }
+/* The video area takes all remaining height so the portrait feed is as large as possible.
+   object-fit: contain keeps the whole frame + tape grid visible (no cropping of the feet). */
+.live-video-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: #000; }
 .live-video-wrap video, .live-video-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 /* NB: FSST never mirrors — geometry is defined in raw image space (brief 4.2). No .mirror rule. */
 .live-video-wrap canvas { pointer-events: none; }

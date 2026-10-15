@@ -149,6 +149,24 @@ Every tunable value lives in `js/config.js` with a `[TUNE]` comment. To tune aft
 
 ---
 
+## 7a. Lenient completion (how a time is captured)
+
+The app is deliberately **lenient** so a trial can always be completed and timed:
+
+- The timer **starts** the moment the first foot lands in square 2 and **stops** when both feet
+  return to square 1 at the end of the lap — detected from the actual path, not from perfect
+  step-by-step matching.
+- A **wrong-square step, line touch, or imperfect order is recorded as a metric/flag but does NOT
+  block the time** and does not fail the trial. Only genuine measurement failures (very low frame
+  rate, severe tracking loss, foot occlusion, or no usable start/stop at all) block a result.
+- The operator can **Stop (safety)** at any time; the elapsed time up to the stop is recorded.
+- A trial counts toward BEST when a time was captured, QC passed, and the operator did not mark it
+  invalid. The operator verdict (balance lost / support used / not facing forward) is the final
+  word on validity — the software does not reject a trial for crossing a line.
+
+If a trial truly cannot be timed (the participant never reached square 2 and back to square 1), it
+is marked `INCOMPLETE` with the `NO_TIME_CAPTURED` flag so you know to re-run it.
+
 ## 8. Limitations
 
 - **Tape, not canes.** The original test steps over low obstacles; a flat tape cross is easier and
