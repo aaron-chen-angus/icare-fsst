@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FSST//LAB — Test Runner</title>
+<style>
+  body { background: #05070d; color: #dfe9ff; font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; padding: 20px; }
+  h1 { color: #00d4ff; font-size: 1.3rem; letter-spacing: 2px; }
+  .summary { font-size: 1.1rem; margin: 12px 0; padding: 12px; border: 1px solid rgba(0,212,255,0.3); }
+  .summary.ok { color: #4cdf7c; border-color: #4cdf7c; }
+  .summary.fail { color: #ff3b30; border-color: #ff3b30; }
+  .case { padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); font-family: monospace; font-size: .86rem; }
+  .pass { color: #4cdf7c; } .fail { color: #ff3b30; }
+  .detail { color: #ffa500; }
+  button { background: transparent; color: #ff6a00; border: 1.5px solid #ff6a00; padding: 10px 18px; font-weight: 700; cursor: pointer; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+<h1>FSST//LAB — SYNTHETIC TEST RUNNER</h1>
+<p>Cases A–S from the brief, section 13. Same assertions as <code>node tests/run.js</code>.</p>
+<button id="run">Re-run tests</button>
+<div id="summary" class="summary">Running…</div>
+<div id="out"></div>
+
+<script src="../js/config.js"></script>
+<script src="../js/schema.js"></script>
+<script src="../js/geometry.js"></script>
+<script src="../js/analysis.js"></script>
+<script src="../tools/build-dictionary.js"></script>
+<script src="synth.js"></script>
+<script src="run.js"></script>
+<script>
+  function render() {
+    const out = document.getElementById('out'), sum = document.getElementById('summary');
+    out.innerHTML = '';
+    const r = FSSTTests.run();
+    for (const c of r.res) {
+      const d = document.createElement('div');
+      d.className = 'case';
+      d.innerHTML = '<span class="' + (c.pass ? 'pass' : 'fail') + '">' + (c.pass ? 'PASS' : 'FAIL') + '</span> ' + c.name + (c.pass ? '' : ' <span class="detail">[' + c.detail + ']</span>');
+      out.appendChild(d);
+    }
+    sum.textContent = r.pass + ' / ' + r.total + ' passed, ' + r.fail + ' failed.';
+    sum.className = 'summary ' + (r.fail ? 'fail' : 'ok');
+  }
+  document.getElementById('run').onclick = render;
+  render();
+</script>
+</body>
+</html>
